@@ -35,6 +35,17 @@ void setup() {
 }
 
 void loop() {
-  
+  mqtt.publish("Iluminação")
 
+}
+void callback(char* topic, byte* payload, unsigned int lenght){
+String msg = "";
+for(int i = 0; i < length; i++){
+  msg += (char) payload[i];
+}
+if(topic == "Iluminação" && msg == "Acender"){
+  digitalWrite(2,high);
+}else if(topic == "Iluminação" && msg == "Apagar"){
+  digitalWrite(2,low)
+}
 }
