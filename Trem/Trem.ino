@@ -1,40 +1,50 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include "env.h"
+
 
 WiFiClient client;
 PubSubClient mqtt(client);
 
-const String BrokerURL = "test.mosquitto.org";
-const int BrokerPort = 1883;
-const String BrokerUser = "";
-const String BrokerPass = "";
-
-const String SSID = "FIESC_IOT_EDU";
-const String PASS = "8120gv08";
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("Conectando ao WiFi");
-  WiFi.begin(SSID,PASS);
+  Serial.println("Conectando ao WiFi"); 
+  WiFi.begin(WIFI_SSID,WIFI_PASS); 
   while(WiFi.status() != WL_CONNECTED){
-    Serial.print(".");
+    Serial.print("."); 
     delay(200);
   }
   Serial.println("\nConectado com Sucesso!");
 
   Serial.println("Conectando ao Broker...");
-  mqtt.setServer(BrokerURL.c_str(), BrokerPort);
+  mqtt.setServer(BROKER_URL, BROKER_PORT);
   String BoardID = "Trem";
-  BoardID += String(random(0xffff), HEX);
-  mqtt.connect(BrokerURL.c_str(), BrokerUser.c_str(), BrokerPass.c_str());
-  while(!mqtt.connected()) {
+  BoardID += String(random(0xffff),HEX);
+  mqtt.connect(BoardID.c_str() , BROKER_USER , BROKER_PASS);
+  while(!mqtt.connected()){
     Serial.print(".");
     delay(200);
   }
+  mqtt.subscribe(TOPIC_ILUM); 
+  mqtt.setCallback(callback); 
   Serial.println("\nConectado ao Broker!");
 }
 
 void loop() {
-  
+mqtt.publish(TOPIC_ILUM , "Acender");
+mqtt.loop();
+delay(1000);
+}
 
+void callback(char* topic, byte* paylbad, usigned int length){
+  String msg = "";
+  for (int i = 0; i < length; i++){
+    msg += (char) payload[i];
+  }
+  if(topic == TOPIC_ILUM && msg == "Acender"){
+    digitalWrite(2,HIGH);
+  }else if (topic == TOPIC_ILUM && msg == "Apagar"){
+    digitalWrite(2,LOW);
+  }
 }
