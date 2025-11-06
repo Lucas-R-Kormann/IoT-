@@ -2,7 +2,6 @@
 #include <PubSubClient.h>
 #include "env.h"
 
-
 WiFiClient client;
 PubSubClient mqtt(client);
 
