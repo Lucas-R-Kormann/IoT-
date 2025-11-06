@@ -1,13 +1,17 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include "env.h"
 
-WiFiClient client;
+WiFiClientSecure client;
 PubSubClient mqtt(client);
 
+const int pinoMotor = 5;
 
 void setup() {
   Serial.begin(115200);
+  pinMode(pinoMotor, OUTPUT);
+  client.setInsecure();
   Serial.println("Conectando ao WiFi"); 
   WiFi.begin(WIFI_SSID,WIFI_PASS); 
   while(WiFi.status() != WL_CONNECTED){
@@ -25,25 +29,20 @@ void setup() {
     Serial.print(".");
     delay(200);
   }
-  mqtt.subscribe(TOPIC_ILUM); 
+  mqtt.subscribe(TOPIC_VELOCIDADE);
   mqtt.setCallback(callback); 
   Serial.println("\nConectado ao Broker!");
 }
 
-void loop() {
-mqtt.publish(TOPIC_ILUM , "Acender");
-mqtt.loop();
-delay(1000);
+if (String(topic) == TOPIC_VELOCIDADE) {
+  int velocidade = msg.toInt();
+  
+  if (velocidade >= 0 && velocidade <= 255) {
+    analogWrite(pinoMotor, velocidade);
+    Serial.print("Velocidade: ");
+    Serial.println(velocidade);
+  }
 }
 
-void callback(char* topic, byte* paylbad, usigned int length){
-  String msg = "";
-  for (int i = 0; i < length; i++){
-    msg += (char) payload[i];
-  }
-  if(topic == TOPIC_ILUM && msg == "Acender"){
-    digitalWrite(2,HIGH);
-  }else if (topic == TOPIC_ILUM && msg == "Apagar"){
-    digitalWrite(2,LOW);
-  }
-}
+
+
