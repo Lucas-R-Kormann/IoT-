@@ -7,10 +7,31 @@ WiFiClientSecure client;
 PubSubClient mqtt(client);
 
 const int pinoMotor = 5;
+const int ledFrente = 18;   // LED verde - frente
+const int ledTras = 19;     // LED vermelho - ré
 
 void setup() {
   Serial.begin(115200);
   pinMode(pinoMotor, OUTPUT);
+  pinMode(ledFrente, OUTPUT);
+  pinMode(ledTras, OUTPUT);
+
+  // TESTE DOS LEDs
+  Serial.println("Testando LED vermelho...");
+  digitalWrite(ledTras, HIGH);
+  delay(1000);
+  digitalWrite(ledTras, LOW);
+  delay(500);
+  
+  Serial.println("Testando LED verde...");
+  digitalWrite(ledFrente, HIGH);
+  delay(1000);
+  digitalWrite(ledFrente, LOW);
+  delay(500);
+  
+  Serial.println("✅ Teste de LEDs concluído");
+  // FIM DO TESTE
+  
   client.setInsecure();
   Serial.println("Conectando ao WiFi"); 
   WiFi.begin(SSID,PASS); 
@@ -32,11 +53,15 @@ void setup() {
   mqtt.subscribe(TOPIC_VELOCIDADE);
   mqtt.setCallback(callback); 
   Serial.println("\nConectado ao Broker!");
+  
+  // Inicializar com tudo desligado
+  analogWrite(pinoMotor, 0);
+  digitalWrite(ledFrente, LOW);
+  digitalWrite(ledTras, LOW);
 }
 
 void loop() {
   if (!mqtt.connected()) {
-    // Reconectar se necessário
     String BoardID = "Trem";
     BoardID += String(random(0xffff),HEX);
     mqtt.connect(BoardID.c_str(), BROKER_USER, BROKER_PASS);
@@ -61,10 +86,29 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) == TOPIC_VELOCIDADE) {
     int velocidade = msg.toInt();
     
-    if (velocidade >= 0 && velocidade <= 255) {
+    // Controle dos LEDs baseado na direção
+    if (velocidade > 0) {
+      // FRENTE - LED verde
       analogWrite(pinoMotor, velocidade);
-      Serial.print("Velocidade: ");
+      digitalWrite(ledFrente, HIGH);
+      digitalWrite(ledTras, LOW);
+      Serial.print("FRENTE - Velocidade: ");
       Serial.println(velocidade);
+      
+    } else if (velocidade < 0) {
+      // RÉ - LED vermelho (usa valor absoluto)
+      analogWrite(pinoMotor, abs(velocidade));
+      digitalWrite(ledFrente, LOW);
+      digitalWrite(ledTras, HIGH);
+      Serial.print("RÉ - Velocidade: ");
+      Serial.println(abs(velocidade));
+      
+    } else {
+      // PARADO
+      analogWrite(pinoMotor, 0);
+      digitalWrite(ledFrente, LOW);
+      digitalWrite(ledTras, LOW);
+      Serial.println("PARADO");
     }
   }
 }
