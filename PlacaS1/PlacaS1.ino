@@ -1,7 +1,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
-#include <DHT.h>
+#include <env.h>
 
 // Definições dos pinos
 #define DHT_PIN 4
@@ -13,12 +13,6 @@
 #define LED_G 26
 #define LED_B 25
 
-// Definições do DHT
-#define DHT_TYPE DHT11
-
-// Inicialização do sensor DHT
-DHT dht(DHT_PIN, DHT_TYPE);
-
 // Variáveis para armazenamento de valores
 float temperatura = 0;
 float umidade = 0;
@@ -29,13 +23,17 @@ int valorLDR = 0;
 WiFiClientSecure client;
 PubSubClient mqtt(client);
 
-const String BrokerURL = "test.mosquitto.org";
-const int BrokerPort = 1883;
-const String BrokerUser = "";
-const String BrokerPass = "";
+const String BrokerURL = "e0b29cef20fa4c27a7169a414c4a3cf5.s1.eu.hivemq.cloud";
+const int BrokerPort = 8883;  // Mudei para 8883 (TLS)
+const String BrokerUser = "Placa_S1";
+const String BrokerPass = "Placa_s1123";
 
-const String SSID = "FIESC_IOT_EDU";
-const String PASS = "8120gv08";
+const String SSID_WIFI = "FIESC_IOT_EDU";
+const String PASS_WIFI = "8120gv08";
+
+// Variáveis para leitura do DHT
+unsigned long ultimaLeituraDHT = 0;
+const unsigned long intervaloLeituraDHT = 2000;
 
 void setup() {
   Serial.begin(115200);
@@ -47,43 +45,37 @@ void setup() {
   pinMode(LED_R, OUTPUT);
   pinMode(LED_G, OUTPUT);
   pinMode(LED_B, OUTPUT);
-  
-  // O pino LDR é analógico, não precisa de pinMode
-  
-  // Inicialização do DHT
-  dht.begin();
+  pinMode(DHT_PIN, INPUT_PULLUP);
   
   // Desliga todos os LEDs RGB no início
   setRGBColor(0, 0, 0);
   
   // Configuração WiFi e MQTT
-  client.setInsecure();
+  client.setInsecure();  // Para conexão TLS sem verificação de certificado
   Serial.println("Conectando ao WiFi");
-  WiFi.begin(SSID, PASS);
-  while(WiFi.status() != WL_CONNECTED){
+  WiFi.begin(SSID_WIFI.c_str(), PASS_WIFI.c_str());
+  
+  int tentativas = 0;
+  while(WiFi.status() != WL_CONNECTED && tentativas < 20){
     Serial.print(".");
-    delay(200);
+    delay(500);
+    tentativas++;
   }
-  Serial.println("\nConectado com Sucesso!");
+  
+  if(WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConectado com Sucesso!");
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nFalha na conexão WiFi!");
+    return;
+  }
 
   Serial.println("Conectando ao Broker...");
   mqtt.setServer(BrokerURL.c_str(), BrokerPort);
-  mqtt.setCallback(callback); // Define a função de callback
+  mqtt.setCallback(callback);
   
-  String BoardID = "S1";
-  BoardID += String(random(0xffff), HEX);
-  
-  if(mqtt.connect(BoardID.c_str(), BrokerUser.c_str(), BrokerPass.c_str())) {
-    Serial.println("\nConectado ao Broker!");
-    
-    // Inscreve nos tópicos MQTT
-    mqtt.subscribe("Iluminação");
-    mqtt.subscribe("LED_RGB");
-    mqtt.subscribe("Controle");
-    
-  } else {
-    Serial.println("\nFalha na conexão com o Broker!");
-  }
+  conectarMQTT();
   
   Serial.println("Sistema inicializado!");
   Serial.println("----------------------------------------");
@@ -92,14 +84,19 @@ void setup() {
 void loop() {
   // Mantém a conexão MQTT ativa
   if (!mqtt.connected()) {
-    reconnectMQTT();
+    conectarMQTT();
   }
   mqtt.loop();
 
   // Leitura dos sensores
-  lerDHT();
   lerUltrassonico();
   lerLDR();
+  
+  // Leitura do DHT a cada 2 segundos
+  if (millis() - ultimaLeituraDHT > intervaloLeituraDHT) {
+    lerDHTReal();
+    ultimaLeituraDHT = millis();
+  }
   
   // Controle automático do LED baseado na luminosidade
   controleLEDAutomatico();
@@ -113,17 +110,116 @@ void loop() {
   // Exibe todos os valores no monitor serial
   exibirValores();
   
-  // Aguarda 2 segundos entre as leituras
-  delay(2000);
+  delay(500);
 }
 
-void lerDHT() {
-  temperatura = dht.readTemperature();
-  umidade = dht.readHumidity();
+void conectarMQTT() {
+  Serial.println("Conectando ao MQTT Broker...");
   
-  // Verifica se a leitura falhou
-  if (isnan(temperatura) || isnan(umidade)) {
-    Serial.println("Falha na leitura do DHT!");
+  String clientId = "ESP32-S1-";
+  clientId += String(random(0xffff), HEX);
+  
+  int tentativas = 0;
+  while (!mqtt.connected() && tentativas < 5) {
+    Serial.print("Tentativa de conexão MQTT... ");
+    
+    if (mqtt.connect(clientId.c_str(), BrokerUser.c_str(), BrokerPass.c_str())) {
+      Serial.println("Conectado!");
+      
+      // Inscreve nos tópicos MQTT
+      mqtt.subscribe("Iluminação");
+      mqtt.subscribe("LED_RGB");
+      mqtt.subscribe("Controle");
+      
+      Serial.println("Inscrito nos tópicos:");
+      Serial.println("- Iluminação");
+      Serial.println("- LED_RGB");
+      Serial.println("- Controle");
+      
+    } else {
+      Serial.print("Falha, rc=");
+      Serial.print(mqtt.state());
+      Serial.println(" tentando novamente em 3 segundos");
+      delay(3000);
+      tentativas++;
+    }
+  }
+}
+
+void lerDHTReal() {
+  byte data[5] = {0, 0, 0, 0, 0};
+  byte i = 0;
+  
+  // Inicia a comunicação
+  pinMode(DHT_PIN, OUTPUT);
+  digitalWrite(DHT_PIN, LOW);
+  delay(18);
+  digitalWrite(DHT_PIN, HIGH);
+  delayMicroseconds(40);
+  pinMode(DHT_PIN, INPUT_PULLUP);
+  
+  // Aguarda resposta do sensor
+  unsigned long timeout = micros() + 10000;
+  while(digitalRead(DHT_PIN) == LOW) {
+    if (micros() > timeout) {
+      Serial.println("Timeout na resposta do DHT");
+      temperatura = -1;
+      umidade = -1;
+      return;
+    }
+  }
+  
+  timeout = micros() + 10000;
+  while(digitalRead(DHT_PIN) == HIGH) {
+    if (micros() > timeout) {
+      Serial.println("Timeout no sinal do DHT");
+      temperatura = -1;
+      umidade = -1;
+      return;
+    }
+  }
+  
+  // Lê os 40 bits de dados
+  for (i = 0; i < 40; i++) {
+    timeout = micros() + 10000;
+    while(digitalRead(DHT_PIN) == LOW) {
+      if (micros() > timeout) {
+        Serial.println("Timeout na leitura do DHT");
+        temperatura = -1;
+        umidade = -1;
+        return;
+      }
+    }
+    
+    unsigned long t = micros();
+    timeout = micros() + 10000;
+    while(digitalRead(DHT_PIN) == HIGH) {
+      if (micros() > timeout) {
+        Serial.println("Timeout no pulso do DHT");
+        temperatura = -1;
+        umidade = -1;
+        return;
+      }
+    }
+    
+    if ((micros() - t) > 40) {
+      data[i/8] |= (1 << (7 - (i % 8)));
+    }
+  }
+  
+  // Verifica checksum
+  if (data[4] == ((data[0] + data[1] + data[2] + data[3]) & 0xFF)) {
+    umidade = data[0];
+    temperatura = data[2];
+    
+    // Converte para valores negativos se necessário
+    if (data[2] & 0x80) {
+      temperatura = -1 - (data[2] & 0x7F);
+    }
+    
+    Serial.println("Leitura DHT bem-sucedida");
+  } else {
+    Serial.println("Erro no checksum do DHT");
     temperatura = -1;
     umidade = -1;
   }
@@ -140,19 +236,33 @@ void lerUltrassonico() {
   digitalWrite(ULTRASONIC_TRIG, LOW);
   
   // Lê o tempo de eco
-  long duracao = pulseIn(ULTRASONIC_ECHO, HIGH);
+  long duracao = pulseIn(ULTRASONIC_ECHO, HIGH, 30000);
   
   // Calcula a distância (velocidade do som = 340 m/s)
-  distancia = duracao * 0.034 / 2;
+  if (duracao > 0) {
+    distancia = duracao * 0.034 / 2;
+    // Filtro para valores muito altos (acima de 400cm considera erro)
+    if (distancia > 400) {
+      distancia = -1;
+    }
+  } else {
+    distancia = -1; // Indica erro na leitura
+  }
 }
 
 void lerLDR() {
+  // Faz a leitura do LDR (0-4095)
   valorLDR = analogRead(LDR_PIN);
+  
+  // Filtro para valores inconsistentes
+  if (valorLDR < 0 || valorLDR > 4095) {
+    valorLDR = -1;
+  }
 }
 
 void controleLEDAutomatico() {
-  // Se estiver escuro (valor LDR baixo), acende o LED
-  if (valorLDR < 1000) { // Ajuste este valor conforme necessário
+  // Se estiver escuro (valor LDR baixo) e leitura for válida, acende o LED
+  if (valorLDR != -1 && valorLDR < 1000) {
     digitalWrite(LED_PIN, HIGH);
   } else {
     digitalWrite(LED_PIN, LOW);
@@ -160,19 +270,21 @@ void controleLEDAutomatico() {
 }
 
 void controleRGBPorTemperatura() {
+  // Só controla se a temperatura for válida
+  if (temperatura == -1) {
+    setRGBColor(255, 0, 255); // Magenta para indicar erro
+    return;
+  }
+  
   // Controla a cor do LED RGB baseado na temperatura
   if (temperatura < 15) {
-    // Azul - Frio
-    setRGBColor(0, 0, 255);
-  } else if (temperatura >= 15 && temperatura < 25) {
-    // Verde - Agradável
-    setRGBColor(0, 255, 0);
-  } else if (temperatura >= 25 && temperatura < 30) {
-    // Amarelo - Quente
-    setRGBColor(255, 255, 0);
+    setRGBColor(0, 0, 255);     // Azul - Frio
+  } else if (temperatura < 25) {
+    setRGBColor(0, 255, 0);     // Verde - Agradável
+  } else if (temperatura < 30) {
+    setRGBColor(255, 255, 0);   // Amarelo - Quente
   } else {
-    // Vermelho - Muito quente
-    setRGBColor(255, 0, 0);
+    setRGBColor(255, 0, 0);     // Vermelho - Muito quente
   }
 }
 
@@ -183,48 +295,89 @@ void setRGBColor(int red, int green, int blue) {
 }
 
 void publicarDadosMQTT() {
-  // Publica temperatura
-  String tempStr = String(temperatura);
-  mqtt.publish("sensor/temperatura", tempStr.c_str());
+  static unsigned long ultimaPublicacao = 0;
   
-  // Publica umidade
-  String umidStr = String(umidade);
-  mqtt.publish("sensor/umidade", umidStr.c_str());
-  
-  // Publica distância
-  String distStr = String(distancia);
-  mqtt.publish("sensor/distancia", distStr.c_str());
-  
-  // Publica luminosidade
-  String ldrStr = String(valorLDR);
-  mqtt.publish("sensor/luminosidade", ldrStr.c_str());
-  
-  // Publica status do LED
-  String ledStatus = digitalRead(LED_PIN) ? "LIGADO" : "DESLIGADO";
-  mqtt.publish("atuador/led_status", ledStatus.c_str());
+  // Publica a cada 5 segundos para não sobrecarregar o broker
+  if (millis() - ultimaPublicacao > 5000 && mqtt.connected()) {
+    
+    Serial.println("=== PUBLICANDO DADOS NO MQTT ===");
+    
+    // Publica temperatura
+    String tempStr = String(temperatura);
+    if (mqtt.publish("sensor/temperatura", tempStr.c_str())) {
+      Serial.println("✓ Temperatura: " + tempStr + "°C");
+    }
+    
+    // Publica umidade
+    String umidStr = String(umidade);
+    if (mqtt.publish("sensor/umidade", umidStr.c_str())) {
+      Serial.println("✓ Umidade: " + umidStr + "%");
+    }
+    
+    // Publica distância
+    String distStr = String(distancia);
+    if (mqtt.publish("sensor/distancia", distStr.c_str())) {
+      Serial.println("✓ Distância: " + distStr + "cm");
+    }
+    
+    // Publica luminosidade
+    String ldrStr = String(valorLDR);
+    if (mqtt.publish("sensor/luminosidade", ldrStr.c_str())) {
+      Serial.println("✓ Luminosidade: " + ldrStr);
+    }
+    
+    // Publica status do LED
+    String ledStatus = digitalRead(LED_PIN) ? "LIGADO" : "DESLIGADO";
+    if (mqtt.publish("atuador/led_status", ledStatus.c_str())) {
+      Serial.println("✓ LED: " + ledStatus);
+    }
+    
+    Serial.println("=================================");
+    
+    ultimaPublicacao = millis();
+  }
 }
 
 void exibirValores() {
-  Serial.println("=== LEITURAS DOS SENSORES ===");
-  Serial.print("Temperatura: ");
-  Serial.print(temperatura);
-  Serial.println(" °C");
+  static unsigned long ultimaExibicao = 0;
   
-  Serial.print("Umidade: ");
-  Serial.print(umidade);
-  Serial.println(" %");
-  
-  Serial.print("Distância: ");
-  Serial.print(distancia);
-  Serial.println(" cm");
-  
-  Serial.print("Luminosidade (LDR): ");
-  Serial.println(valorLDR);
-  
-  Serial.print("LED: ");
-  Serial.println(digitalRead(LED_PIN) ? "LIGADO" : "DESLIGADO");
-  
-  Serial.println("----------------------------");
+  // Exibe a cada 2 segundos para não sobrecarregar a serial
+  if (millis() - ultimaExibicao > 2000) {
+    Serial.println("=== LEITURAS DOS SENSORES ===");
+    
+    Serial.print("Temperatura: ");
+    if (temperatura == -1) Serial.print("ERRO");
+    else Serial.print(temperatura);
+    Serial.println(" °C");
+    
+    Serial.print("Umidade: ");
+    if (umidade == -1) Serial.print("ERRO");
+    else Serial.print(umidade);
+    Serial.println(" %");
+    
+    Serial.print("Distância: ");
+    if (distancia == -1) Serial.print("ERRO");
+    else Serial.print(distancia);
+    Serial.println(" cm");
+    
+    Serial.print("Luminosidade (LDR): ");
+    if (valorLDR == -1) Serial.print("ERRO");
+    else Serial.print(valorLDR);
+    Serial.println("");
+    
+    Serial.print("LED: ");
+    Serial.println(digitalRead(LED_PIN) ? "LIGADO" : "DESLIGADO");
+    
+    Serial.print("WiFi: ");
+    Serial.println(WiFi.status() == WL_CONNECTED ? "CONECTADO" : "DESCONECTADO");
+    
+    Serial.print("MQTT: ");
+    Serial.println(mqtt.connected() ? "CONECTADO" : "DESCONECTADO");
+    
+    Serial.println("----------------------------");
+    
+    ultimaExibicao = millis();
+  }
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -242,10 +395,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
   if(String(topic) == "Iluminação") {
     if(msg == "Acender") {
       digitalWrite(LED_PIN, HIGH);
-      Serial.println("LED ligado via MQTT");
+      Serial.println(">>> LED ligado via MQTT");
     } else if(msg == "Apagar") {
       digitalWrite(LED_PIN, LOW);
-      Serial.println("LED desligado via MQTT");
+      Serial.println(">>> LED desligado via MQTT");
     }
   }
   
@@ -253,81 +406,30 @@ void callback(char* topic, byte* payload, unsigned int length) {
   else if(String(topic) == "LED_RGB") {
     if(msg == "Vermelho") {
       setRGBColor(255, 0, 0);
-      Serial.println("LED RGB: Vermelho");
+      Serial.println(">>> LED RGB: Vermelho");
     } else if(msg == "Verde") {
       setRGBColor(0, 255, 0);
-      Serial.println("LED RGB: Verde");
+      Serial.println(">>> LED RGB: Verde");
     } else if(msg == "Azul") {
       setRGBColor(0, 0, 255);
-      Serial.println("LED RGB: Azul");
+      Serial.println(">>> LED RGB: Azul");
     } else if(msg == "Branco") {
       setRGBColor(255, 255, 255);
-      Serial.println("LED RGB: Branco");
+      Serial.println(">>> LED RGB: Branco");
     } else if(msg == "Desligar") {
       setRGBColor(0, 0, 0);
-      Serial.println("LED RGB: Desligado");
+      Serial.println(">>> LED RGB: Desligado");
     }
   }
   
   // Controle geral do sistema
   else if(String(topic) == "Controle") {
     if(msg == "Reset") {
-      Serial.println("Reiniciando sistema...");
+      Serial.println(">>> Reiniciando sistema...");
       ESP.restart();
     } else if(msg == "Status") {
-      // Publica status completo
+      Serial.println(">>> Solicitando status...");
       publicarDadosMQTT();
-      Serial.println("Status publicado via MQTT");
     }
   }
-}
-
-void reconnectMQTT() {
-  Serial.println("Reconectando ao MQTT...");
-  String BoardID = "S1";
-  BoardID += String(random(0xffff), HEX);
-  
-  if (mqtt.connect(BoardID.c_str(), BrokerUser.c_str(), BrokerPass.c_str())) {
-    Serial.println("Reconectado ao Broker!");
-    
-    // Re-inscreve nos tópicos
-    mqtt.subscribe("Iluminação");
-    mqtt.subscribe("LED_RGB");
-    mqtt.subscribe("Controle");
-    
-  } else {
-    Serial.print("Falha na reconexão, rc=");
-    Serial.print(mqtt.state());
-    Serial.println(" tentando novamente em 5 segundos");
-    delay(5000);
-  }
-}
-
-// Função adicional para testar o LED RGB manualmente
-void testarRGB() {
-  Serial.println("Testando LED RGB...");
-  
-  setRGBColor(255, 0, 0);   // Vermelho
-  delay(1000);
-  
-  setRGBColor(0, 255, 0);   // Verde
-  delay(1000);
-  
-  setRGBColor(0, 0, 255);   // Azul
-  delay(1000);
-  
-  setRGBColor(255, 255, 0); // Amarelo
-  delay(1000);
-  
-  setRGBColor(255, 0, 255); // Magenta
-  delay(1000);
-  
-  setRGBColor(0, 255, 255); // Ciano
-  delay(1000);
-  
-  setRGBColor(255, 255, 255); // Branco
-  delay(1000);
-  
-  setRGBColor(0, 0, 0);     // Desligado
-  Serial.println("Teste RGB concluído!");
 }
