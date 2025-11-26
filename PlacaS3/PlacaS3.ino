@@ -1,16 +1,23 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
+#include <env.h>
+
 
 WiFiClient client;
 PubSubClient mqtt(client);
 
-const String BrokerURL = "test.mosquitto.org";
-const int BrokerPort = 1883;
-const String BrokerUser = "";
-const String BrokerPass = "";
+const byte Trigger = *;
+const byte echo = *;
 
-const String SSID = "FIESC_IOT_EDU";
-const String PASS = "8120gv08";
+const byte pinLed = *;
+
+//os servos vem aqui
+Servo Servo1_S3;
+Servo Servo2_S3;
+
+const byte Servo1Pin = *;
+const byte Servo2Pin = *;
 
 void setup() {
   Serial.begin(115200);
@@ -34,9 +41,19 @@ void setup() {
   Serial.println("\nConectado ao Broker!");
 }
 
-void loop() {
-  mqtt.publish("Iluminação")
+void loop(){
 
+  // distancia 
+  long distancia = lerDistancia();
+
+  if (distancia < 20){
+    mqtt.publish(Topic_S3_Presenca, "S3 - Presença : em rota colisão !!!");
+  }else{
+    mqtt.publish(Topic_S3_Presenca, "S3 - Presença : Caminho Livre");
+  }
+
+delay(200);
+mqtt.loop(500);
 }
 void callback(char* topic, byte* payload, unsigned int lenght){
 String msg = "";
