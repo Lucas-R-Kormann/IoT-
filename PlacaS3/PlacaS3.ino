@@ -41,6 +41,46 @@ void setup() {
   Serial.println("\nConectado ao Broker!");
 }
 
+// topicos
+
+  mqtt.subscribe(Topic_S2_Presenca1);
+  mqtt.subscribe(Topic_S2_Presenca2);
+  mqtt.subscribe(Topic_S1_Iluminacao);
+  mqtt.subscribe(Topic_S3_Presenca);
+// Inscreve o dispositivo em 4 tópicos MQTT diferentes
+// O dispositivo vai receber mensagens publicadas nesses tópicos
+
+  Serial.println("\nConectado ao broker!"); 
+  mqtt.setCallback(callback);  //função de callback
+
+  Servo1_S3.setPeriodHertz(50);  //Define a frequência do sinal PWM para 50Hz
+  Servo1_S3.attach(Servo1Pin, 500, 2400); //Conecta o servo ao pino específico com pulsos entre 500-2400μs
+
+
+  Servo2_S3.setPeriodHertz(50);
+  Servo2_S3.attach(Servo2Pin, 500, 2400);
+
+
+  pinMode(Trigger, OUTPUT); //Pino que envia o pulso ultrassônico
+  pinMode(echo, INPUT); //Pino que recebe o eco do pulso para calcular distância
+
+}
+
+}
+
+  long lerDistancia(){
+  digitalWrite(Trigger, LOW);
+  delayMicroseconds(2);
+  digitalWrite(Trigger, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(Trigger, LOW);
+  long duracao = pulseIn(echo, HIGH);
+  long distancia = duracao * 349.24 / 2 / 10000;
+  return distancia;
+    
+
+  }
+
 void loop(){
 
   // distancia 
@@ -55,14 +95,35 @@ void loop(){
 delay(200);
 mqtt.loop(500);
 }
+
 void callback(char* topic, byte* payload, unsigned int lenght){
 String msg = "";
 for(int i = 0; i < length; i++){
   msg += (char) payload[i];
 }
-if(topic == "Iluminação" && msg == "Acender"){
-  digitalWrite(2,high);
-}else if(topic == "Iluminação" && msg == "Apagar"){
-  digitalWrite(2,low)
-}
+
+ Serial.printf("Msg:%s / Topic%s\n", msg, topic);
+
+// config servos
+  if (strcmp(topic, Topic_S2_Presenca1) == 0 && msg == "S2 - Presença 1:  Em rota de Colisão !!!"){
+    Servo1_S3.write(90);
+    
+  } else if (strcmp(topic, Topic_S3_Presenca) == 0 && msg == "S3 - Presença : em rota colisão !!!"){
+    Servo1_S3.write(120);
+    Servo2_S3.write(90);
+
+  }else if (strcmp(topic, Topic_S2_Presenca2) == 0 && msg == "S2 - Presença 2: Em rota de Colisão !!!"){
+    Servo2_S3.write(120);
+  }
+
+// configuração de luz
+    if (strcmp(topic, Topic_S1_Iluminacao) == 0 && msg == "Acender")
+  {
+    digitalWrite(ledPin, HIGH);
+    Serial.println("luz ");
+  }
+  else if (strcmp(topic, Topic_S1_Iluminacao) == 0 && msg == "Apagar")
+  {
+    digitalWrite(ledPin, LOW);
+  }
 }
