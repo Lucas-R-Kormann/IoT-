@@ -3,11 +3,13 @@
  * Sistema completo de monitoramento e controle com MQTT
  * Componentes: DHT11, Sensor Ultrassônico, LDR, LED RGB, LED simples
  * Broker: HiveMQ Cloud
+ * Biblioteca DHT: Adafruit DHT Sensor Library
  */
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
+#include <DHT.h>
 #include <env.h>
 
 // ==============================
@@ -22,6 +24,13 @@
 #define LED_R 14            // Pino do LED RGB - Cor Vermelha
 #define LED_G 26            // Pino do LED RGB - Cor Verde
 #define LED_B 25            // Pino do LED RGB - Cor Azul
+
+// ==============================
+// CONFIGURAÇÃO DO SENSOR DHT
+// ==============================
+
+#define DHT_TYPE DHT11      // Tipo do sensor DHT (DHT11, DHT22, DHT21)
+DHT dht(DHT_PIN, DHT_TYPE); // Cria objeto DHT
 
 // ==============================
 // VARIÁVEIS GLOBAIS
@@ -66,6 +75,7 @@ void setup() {
   // Inicializa comunicação serial para debug
   Serial.begin(115200);
   Serial.println("\n=== INICIALIZANDO SISTEMA PLACA S1 ===");
+  Serial.println("Biblioteca DHT: Adafruit DHT Sensor Library");
   
   // ==============================
   // CONFIGURAÇÃO DOS PINOS
@@ -78,9 +88,27 @@ void setup() {
   pinMode(LED_R, OUTPUT);             // LED RGB Vermelho como saída
   pinMode(LED_G, OUTPUT);             // LED RGB Verde como saída
   pinMode(LED_B, OUTPUT);             // LED RGB Azul como saída
-  pinMode(DHT_PIN, INPUT_PULLUP);     // DHT com pull-up interno
   
   // Nota: LDR_PIN (34) é analógico e não precisa de pinMode
+  // Nota: DHT_PIN é gerenciado pela biblioteca DHT
+  
+  // ==============================
+  // INICIALIZAÇÃO DO SENSOR DHT
+  // ==============================
+  
+  Serial.println("Inicializando sensor DHT11...");
+  dht.begin();  // Inicializa o sensor DHT
+  delay(1000);  // Aguarda estabilização do sensor
+  
+  // Verifica se o sensor DHT está respondendo
+  float testTemp = dht.readTemperature();
+  float testHum = dht.readHumidity();
+  
+  if (isnan(testTemp) || isnan(testHum)) {
+    Serial.println("AVISO: Sensor DHT pode não estar conectado ou funcionando corretamente");
+  } else {
+    Serial.println("Sensor DHT inicializado com sucesso");
+  }
   
   // Inicializa todos os LEDs desligados
   setRGBColor(0, 0, 0);  // RGB desligado
@@ -153,7 +181,7 @@ void loop() {
   
   // Leitura do DHT11 a cada 2 segundos (evita sobrecarga do sensor)
   if (millis() - ultimaLeituraDHT > intervaloLeituraDHT) {
-    lerDHTReal();            // Lê temperatura e umidade
+    lerDHT();                // Lê temperatura e umidade usando biblioteca DHT
     ultimaLeituraDHT = millis();  // Atualiza tempo da última leitura
   }
   
@@ -250,101 +278,34 @@ String getMQTTErrorString(int state) {
 }
 
 // ==============================
-// FUNÇÃO: LEITURA DO SENSOR DHT11
+// FUNÇÃO: LEITURA DO SENSOR DHT11 (COM BIBLIOTECA)
 // ==============================
 
-void lerDHTReal() {
-  byte data[5] = {0, 0, 0, 0, 0};  // Array para armazenar os 5 bytes de dados
-  byte i = 0;
+void lerDHT() {
+  // Lê temperatura em Celsius (padrão)
+  temperatura = dht.readTemperature();
   
-  // ==============================
-  // PROTOCOLO DE COMUNICAÇÃO DHT11
-  // ==============================
+  // Lê umidade
+  umidade = dht.readHumidity();
   
-  // Fase 1: Inicia comunicação
-  pinMode(DHT_PIN, OUTPUT);     // Define pino como saída
-  digitalWrite(DHT_PIN, LOW);   // Sinal baixo para iniciar
-  delay(18);                    // Aguarda 18ms (exigência do sensor)
-  digitalWrite(DHT_PIN, HIGH);  // Sinal alto
-  delayMicroseconds(40);        // Aguarda 40μs
-  pinMode(DHT_PIN, INPUT_PULLUP); // Muda para entrada com pull-up
-  
-  // Fase 2: Aguarda resposta do sensor
-  unsigned long timeout = micros() + 10000;  // Timeout de 10ms
-  while(digitalRead(DHT_PIN) == LOW) {
-    if (micros() > timeout) {
-      Serial.println("ERRO DHT: Timeout na resposta inicial");
-      temperatura = -1;
-      umidade = -1;
-      return;
-    }
+  // Verifica se as leituras são válidas
+  if (isnan(temperatura) || isnan(umidade)) {
+    Serial.println("ERRO DHT: Falha na leitura do sensor DHT!");
+    temperatura = -1;
+    umidade = -1;
+    return;
   }
   
-  // Fase 3: Aguarda sinal de preparação
-  timeout = micros() + 10000;
-  while(digitalRead(DHT_PIN) == HIGH) {
-    if (micros() > timeout) {
-      Serial.println("ERRO DHT: Timeout no sinal de preparação");
-      temperatura = -1;
-      umidade = -1;
-      return;
-    }
+  // Verifica se os valores estão dentro de faixas razoáveis para o DHT11
+  if (temperatura < -10 || temperatura > 50 || umidade < 0 || umidade > 100) {
+    Serial.println("AVISO DHT: Valores fora da faixa esperada");
   }
   
-  // ==============================
-  // LEITURA DOS 40 BITS DE DADOS
-  // ==============================
+  // Opcional: também pode ler temperatura em Fahrenheit
+  // float f = dht.readTemperature(true);
   
-  for (i = 0; i < 40; i++) {
-    // Aguarda pulso baixo
-    timeout = micros() + 10000;
-    while(digitalRead(DHT_PIN) == LOW) {
-      if (micros() > timeout) {
-        Serial.println("ERRO DHT: Timeout no pulso baixo");
-        temperatura = -1;
-        umidade = -1;
-        return;
-      }
-    }
-    
-    // Mede duração do pulso alto
-    unsigned long t = micros();
-    timeout = micros() + 10000;
-    while(digitalRead(DHT_PIN) == HIGH) {
-      if (micros() > timeout) {
-        Serial.println("ERRO DHT: Timeout no pulso alto");
-        temperatura = -1;
-        umidade = -1;
-        return;
-      }
-    }
-    
-    // Se pulso alto > 40μs, é bit 1, senão é bit 0
-    if ((micros() - t) > 40) {
-      data[i/8] |= (1 << (7 - (i % 8)));  // Define bit como 1
-    }
-  }
-  
-  // ==============================
-  // VERIFICAÇÃO E PROCESSAMENTO
-  // ==============================
-  
-  // Verifica checksum (soma dos 4 primeiros bytes deve igualar o 5º byte)
-  if (data[4] == ((data[0] + data[1] + data[2] + data[3]) & 0xFF)) {
-    umidade = data[0];     // Byte 0: Umidade inteira
-    temperatura = data[2]; // Byte 2: Temperatura inteira
-    
-    // Verifica se temperatura é negativa (bit mais significativo = 1)
-    if (data[2] & 0x80) {
-      temperatura = -1 - (data[2] & 0x7F);  // Converte para negativo
-    }
-    
-    Serial.println("Leitura DHT bem-sucedida");
-  } else {
-    Serial.println("ERRO DHT: Erro no checksum do DHT");
-    temperatura = -1;  // Marca como erro
-    umidade = -1;      // Marca como erro
-  }
+  // Opcional: calcular índice de calor (sensação térmica)
+  // float hic = dht.computeHeatIndex(temperatura, umidade, false);
 }
 
 // ==============================
@@ -453,19 +414,19 @@ void publicarDadosMQTT() {
     Serial.println("PUBLICANDO - === PUBLICANDO DADOS NO MQTT ===");
     
     // Publica temperatura no tópico específico
-    String tempStr = String(temperatura);
+    String tempStr = String(temperatura, 1);  // 1 casa decimal
     if (mqtt.publish("sensor/temperatura", tempStr.c_str())) {
       Serial.println("OK - Temperatura: " + tempStr + "°C");
     }
     
     // Publica umidade no tópico específico
-    String umidStr = String(umidade);
+    String umidStr = String(umidade, 1);  // 1 casa decimal
     if (mqtt.publish("sensor/umidade", umidStr.c_str())) {
       Serial.println("OK - Umidade: " + umidStr + "%");
     }
     
     // Publica distância no tópico específico
-    String distStr = String(distancia);
+    String distStr = String(distancia, 1);  // 1 casa decimal
     if (mqtt.publish("sensor/distancia", distStr.c_str())) {
       Serial.println("OK - Distância: " + distStr + "cm");
     }
@@ -502,19 +463,19 @@ void exibirValores() {
     // Exibe temperatura com tratamento de erro
     Serial.print("Temperatura: ");
     if (temperatura == -1) Serial.print("ERRO");
-    else Serial.print(temperatura);
+    else Serial.print(temperatura, 1);  // 1 casa decimal
     Serial.println(" °C");
     
     // Exibe umidade com tratamento de erro
     Serial.print("Umidade: ");
     if (umidade == -1) Serial.print("ERRO");
-    else Serial.print(umidade);
+    else Serial.print(umidade, 1);  // 1 casa decimal
     Serial.println(" %");
     
     // Exibe distância com tratamento de erro
     Serial.print("Distância: ");
     if (distancia == -1) Serial.print("ERRO");
-    else Serial.print(distancia);
+    else Serial.print(distancia, 1);  // 1 casa decimal
     Serial.println(" cm");
     
     // Exibe luminosidade com tratamento de erro
