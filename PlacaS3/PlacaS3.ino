@@ -69,21 +69,21 @@ void setup() {
 }
 
   long lerDistancia(){
-  digitalWrite(Trigger, LOW);
+  digitalWrite(Trigger, LOW);// Coloca o pino Trigger em LOW para garantir um estado limpo antes de iniciar a medição
   delayMicroseconds(2);
-  digitalWrite(Trigger, HIGH);
-  delayMicroseconds(10);
+  digitalWrite(Trigger, HIGH); //Envia um pulso de 10μs no pino Trigger para o sensor emitir o sinal ultrassônico
+  delayMicroseconds(10); 
   digitalWrite(Trigger, LOW);
-  long duracao = pulseIn(echo, HIGH);
-  long distancia = duracao * 349.24 / 2 / 10000;
-  return distancia;
+  long duracao = pulseIn(echo, HIGH); //Função que mede o tempo de emissão do som até o recebimento do echo
+  long distancia = duracao * 349.24 / 2 / 10000; //Calculo de distância 
+  return distancia; //Retorna a distância calculada em cm
     
 
   }
 
 void loop(){
 
-  // distancia 
+  // Medição contínua de distância e alerta 
   long distancia = lerDistancia();
 
   if (distancia < 20){
@@ -106,21 +106,21 @@ for(int i = 0; i < length; i++){
 
 // config servos
   if (strcmp(topic, Topic_S2_Presenca1) == 0 && msg == "S2 - Presença 1:  Em rota de Colisão !!!"){
-    Servo1_S3.write(90);
+    Servo1_S3.write(90); //Move Servo1 para 90°
     
   } else if (strcmp(topic, Topic_S3_Presenca) == 0 && msg == "S3 - Presença : em rota colisão !!!"){
-    Servo1_S3.write(120);
+    Servo1_S3.write(120); //Ajusta ambos os servos
     Servo2_S3.write(90);
 
   }else if (strcmp(topic, Topic_S2_Presenca2) == 0 && msg == "S2 - Presença 2: Em rota de Colisão !!!"){
-    Servo2_S3.write(120);
+    Servo2_S3.write(120); //Move Servo2 para 120°
   }
 
 // configuração de luz
     if (strcmp(topic, Topic_S1_Iluminacao) == 0 && msg == "Acender")
   {
     digitalWrite(ledPin, HIGH);
-    Serial.println("luz ");
+    Serial.println("luz");
   }
   else if (strcmp(topic, Topic_S1_Iluminacao) == 0 && msg == "Apagar")
   {
